@@ -14,6 +14,7 @@ export default function useWebRTC({ socket, roomId }) {
   const [sharing, setSharing] = useState(false);
   const [notice, setNotice] = useState('');
   const [roomError, setRoomError] = useState('');
+  const [roomSize, setRoomSize] = useState(0);
 
   const pcs = useRef(new Map()); // socketId -> RTCPeerConnection
   const pending = useRef(new Map()); // ICE candidates that arrived before the remote description
@@ -40,6 +41,9 @@ export default function useWebRTC({ socket, roomId }) {
   useEffect(() => {
     if (!socket) return undefined;
     let cancelled = false;
+    // Peer connections wait for the camera/mic decision. Joining the room (chat, whiteboard, files) does not.
+    let resolveReady;
+    const mediaReady = new Promise((r) => { resolveReady = r; });
 
     const videoToSend = () => screenStream.current?.getVideoTracks()[0] || camStream.current?.getVideoTracks()[0];
 
@@ -78,6 +82,7 @@ export default function useWebRTC({ socket, roomId }) {
     const safe = (fn) => (...args) => fn(...args).catch((e) => console.error('signaling error', e));
 
     const onRoomUsers = async (users) => {
+      await mediaReady;
       for (const { socketId, user, media: m } of users) {
         const pc = createPeer(socketId, user);
         if (m) upsert(socketId, m);
@@ -87,6 +92,7 @@ export default function useWebRTC({ socket, roomId }) {
       }
     };
     const onOffer = async ({ from, user, media: m, sdp }) => {
+      await mediaReady;
       const pc = createPeer(from, user);
       if (m) upsert(from, m);
       await pc.setRemoteDescription(sdp);
@@ -119,8 +125,26 @@ export default function useWebRTC({ socket, roomId }) {
       'user-joined': ({ user }) => setNotice(`${user.name} joined`),
       'media-state': ({ from, audio, video, sharing: s }) => upsert(from, { audio, video, sharing: s }),
       'room-error': ({ message }) => setRoomError(message),
+      'room-size': (n) => setRoomSize(n),
     };
     Object.entries(handlers).forEach(([evt, h]) => socket.on(evt, h));
+
+    // Join now if connected, and again after any reconnect (a new socket has no room membership).
+    let firstJoin = true;
+    const join = () => {
+      if (!firstJoin) {
+        pcs.current.forEach((pc) => pc.close());
+        pcs.current.clear();
+        pending.current.clear();
+        setPeers({});
+      }
+      firstJoin = false;
+      socket.emit('join-room', { roomId, media: media.current });
+    };
+    const onDisconnect = () => setRoomSize(0);
+    socket.on('connect', join);
+    socket.on('disconnect', onDisconnect);
+    if (socket.connected) join();
 
     (async () => {
       let stream = null;
@@ -139,6 +163,7 @@ export default function useWebRTC({ socket, roomId }) {
       }
       if (cancelled) {
         stream?.getTracks().forEach((t) => t.stop());
+        resolveReady();
         return;
       }
       camStream.current = stream;
@@ -150,12 +175,15 @@ export default function useWebRTC({ socket, roomId }) {
       };
       setMicOn(media.current.audio);
       setCamOn(media.current.video);
-      socket.emit('join-room', { roomId, media: media.current });
+      socket.emit('media-state', media.current);
+      resolveReady();
     })();
 
     return () => {
       cancelled = true;
       Object.entries(handlers).forEach(([evt, h]) => socket.off(evt, h));
+      socket.off('connect', join);
+      socket.off('disconnect', onDisconnect);
       socket.emit('leave-room');
       pcs.current.forEach((pc) => pc.close());
       pcs.current.clear();
@@ -233,6 +261,7 @@ export default function useWebRTC({ socket, roomId }) {
     notice,
     clearNotice: () => setNotice(''),
     roomError,
+    roomSize,
     toggleMic,
     toggleCam,
     toggleShare,

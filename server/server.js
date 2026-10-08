@@ -27,7 +27,8 @@ if (!/^[0-9a-fA-F]{64}$/.test(process.env.FILE_ENCRYPTION_KEY)) {
 const isProd = process.env.NODE_ENV === 'production';
 const app = express();
 const server = http.createServer(app);
-app.set('io', initSockets(server));
+const io = initSockets(server);
+app.set('io', io);
 app.set('trust proxy', 1); // correct client IPs for rate limiting behind Render/Railway/Nginx
 
 app.use(
@@ -45,7 +46,7 @@ app.use(express.json({ limit: '100kb' }));
 app.use(cookieParser());
 if (!isProd) app.use(morgan('dev'));
 
-app.get('/api/health', (req, res) => res.json({ ok: true }));
+app.get('/api/health', (req, res) => res.json({ ok: true, sockets: io.engine.clientsCount }));
 app.use('/api', apiLimiter);
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/rooms', require('./routes/room'));

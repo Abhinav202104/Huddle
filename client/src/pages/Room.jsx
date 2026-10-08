@@ -23,11 +23,17 @@ function Timer() {
 function Meeting({ roomId }) {
   const nav = useNavigate();
   const { user } = useAuth();
-  const { socket } = useSocket();
+  const { socket, status, error } = useSocket();
   const rtc = useWebRTC({ socket, roomId });
   const [board, setBoard] = useState(false);
   const [tab, setTab] = useState('chat');
   const [copied, setCopied] = useState(false);
+  const live = status === 'connected' && rtc.roomSize > 0;
+  const pill = live
+    ? `Live · ${rtc.roomSize} in room`
+    : status === 'connected' ? 'Joining…'
+    : status === 'connecting' ? 'Connecting…'
+    : `Offline${error ? ': ' + error : ''}`;
 
   useEffect(() => {
     if (!rtc.notice) return undefined;
@@ -59,6 +65,7 @@ function Meeting({ roomId }) {
           <b>Huddle</b>
           <span className="code">{roomId}</span>
           <Timer />
+          <span className={`pill ${live ? 'ok' : 'bad'}`} role="status">{pill}</span>
         </div>
         <button className="btn ghost light" onClick={copy}>{copied ? 'Copied' : 'Copy invite link'}</button>
       </header>

@@ -10,7 +10,8 @@ const cleanMedia = (m = {}) => ({ audio: !!m.audio, video: !!m.video, sharing: !
 module.exports = (io, socket) => {
   socket.on('join-room', async ({ roomId, media } = {}) => {
     try {
-      if (!isValidRoomId(roomId) || socket.data.roomId) return;
+      if (!isValidRoomId(roomId) || socket.data.roomId || socket.data.joining) return;
+      socket.data.joining = true; // blocks a second join-room while this one is still awaiting the database
       const room = await Room.findOne({ roomId, isActive: true });
       if (!room) return socket.emit('room-error', { message: 'Room not found' });
       await Room.updateOne({ _id: room._id }, { $addToSet: { participants: socket.data.user.id } });
@@ -22,6 +23,9 @@ module.exports = (io, socket) => {
       socket.data.media = cleanMedia(media);
       socket.data.roomId = roomId;
       socket.join(roomId);
+      const count = io.sockets.adapter.rooms.get(roomId)?.size || 1;
+      io.to(roomId).emit('room-size', count); // everyone in the room sees the live head count
+      console.log(`[join] ${socket.data.user.name} -> ${roomId} (${count} in room)`);
 
       // The newer peer always sends the offers to older peers, so two people who
       // join at the same moment never send offers to each other (no glare).
@@ -37,6 +41,8 @@ module.exports = (io, socket) => {
     } catch (e) {
       console.error(e);
       socket.emit('room-error', { message: 'Could not join the room' });
+    } finally {
+      socket.data.joining = false;
     }
   });
 
@@ -69,7 +75,10 @@ module.exports = (io, socket) => {
     socket.data.roomId = null;
     socket.leave(roomId);
     socket.to(roomId).emit('user-left', { socketId: socket.id });
-    if (!io.sockets.adapter.rooms.get(roomId)) clearBoard(roomId);
+    const left = io.sockets.adapter.rooms.get(roomId)?.size || 0;
+    if (left) io.to(roomId).emit('room-size', left);
+    else clearBoard(roomId);
+    console.log(`[leave] ${socket.data.user.name} <- ${roomId} (${left} left)`);
   };
   socket.on('leave-room', leave);
   socket.on('disconnect', leave);
