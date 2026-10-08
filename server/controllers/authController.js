@@ -1,7 +1,7 @@
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
-const { setAuthCookies, clearAuthCookies } = require('../utils/generateToken');
+const { setAuthCookies, clearAuthCookies, signAccess } = require('../utils/generateToken');
 
 const EMAIL_RE = /^\S+@\S+\.\S+$/;
 const publicUser = (u) => ({ id: u.id, name: u.name, email: u.email });
@@ -81,3 +81,6 @@ exports.me = async (req, res, next) => {
     next(e);
   }
 };
+
+// The socket connection sends this token in its handshake instead of relying on the cookie.
+exports.socketToken = (req, res) => res.json({ token: signAccess(req.user) });

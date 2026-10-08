@@ -1,33 +1,52 @@
 import { createContext, useContext, useEffect, useState } from 'react';
-import api from '../services/api.js';
+import { io } from 'socket.io-client';
+import { useAuth } from './AuthContext.jsx';
+import api, { SERVER_URL } from '../services/api.js';
 
-const AuthContext = createContext(null);
+const SocketContext = createContext({ socket: null, status: 'connecting', error: '' });
 
-export function AuthProvider({ children }) {
-  const [user, setUser] = useState(null);
-  const [loading, setLoading] = useState(true);
+export function SocketProvider({ children }) {
+  const { user } = useAuth();
+  const [socket, setSocket] = useState(null);
+  const [status, setStatus] = useState('connecting');
+  const [error, setError] = useState('');
 
   useEffect(() => {
-    api.get('/auth/me')
-      .then((r) => setUser(r.data.user))
-      .catch(() => setUser(null))
-      .finally(() => setLoading(false));
-  }, []);
+    if (!user) {
+      setSocket(null);
+      return undefined;
+    }
+    const s = io(SERVER_URL || undefined, {
+      withCredentials: true,
+      transports: ['websocket', 'polling'],
+      // Called on every (re)connect: asks the REST API (which already works) for a fresh token.
+      auth: (cb) => {
+        api.get('/auth/socket-token')
+          .then((r) => cb({ token: r.data.token }))
+          .catch(() => cb({}));
+      },
+    });
+    let retried = false;
+    setStatus('connecting');
+    s.on('connect', () => { retried = false; setStatus('connected'); setError(''); });
+    s.on('disconnect', () => setStatus('disconnected'));
+    s.on('connect_error', async (err) => {
+      setStatus('disconnected');
+      setError(err.message);
+      // Expired access token: refresh the cookies once, then reconnect.
+      if (err.message === 'unauthorized' && !retried) {
+        retried = true;
+        try {
+          await api.post('/auth/refresh');
+          s.connect();
+        } catch { /* signed out */ }
+      }
+    });
+    setSocket(s);
+    return () => s.disconnect();
+  }, [user?.id]);
 
-  const login = async (email, password) => {
-    const { data } = await api.post('/auth/login', { email, password });
-    setUser(data.user);
-  };
-  const register = async (name, email, password) => {
-    const { data } = await api.post('/auth/register', { name, email, password });
-    setUser(data.user);
-  };
-  const logout = async () => {
-    await api.post('/auth/logout').catch(() => {});
-    setUser(null);
-  };
-
-  return <AuthContext.Provider value={{ user, loading, login, register, logout }}>{children}</AuthContext.Provider>;
+  return <SocketContext.Provider value={{ socket, status, error }}>{children}</SocketContext.Provider>;
 }
 
-export const useAuth = () => useContext(AuthContext);
+export const useSocket = () => useContext(SocketContext);

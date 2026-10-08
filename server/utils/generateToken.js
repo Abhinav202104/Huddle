@@ -26,4 +26,4 @@ function clearAuthCookies(res) {
   res.clearCookie('refreshToken', { ...base, path: '/api/auth' });
 }
 
-module.exports = { setAuthCookies, clearAuthCookies };
+module.exports = { setAuthCookies, clearAuthCookies, signAccess };

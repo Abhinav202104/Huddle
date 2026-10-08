@@ -11,11 +11,12 @@ module.exports = function initSockets(server) {
     maxHttpBufferSize: 1e6,
   });
 
-  // Same JWT cookie as the REST API. No token, no socket.
+  // Same JWT as the REST API. It comes from the handshake auth field, or the cookie as a fallback.
   io.use((socket, next) => {
     try {
       const cookies = cookie.parse(socket.handshake.headers.cookie || '');
-      const p = jwt.verify(cookies.accessToken, process.env.JWT_ACCESS_SECRET);
+      const token = socket.handshake.auth?.token || cookies.accessToken;
+      const p = jwt.verify(token, process.env.JWT_ACCESS_SECRET);
       socket.data.user = { id: p.id, name: p.name };
       next();
     } catch {
