@@ -16,7 +16,16 @@ export function SocketProvider({ children }) {
       setSocket(null);
       return undefined;
     }
-    const s = io(SERVER_URL || undefined, { withCredentials: true, transports: ['websocket', 'polling'] });
+    const s = io(SERVER_URL || undefined, {
+      withCredentials: true,
+      transports: ['websocket', 'polling'],
+      // Called on every (re)connect: asks the REST API (which already works) for a fresh token.
+      auth: (cb) => {
+        api.get('/auth/socket-token')
+          .then((r) => cb({ token: r.data.token }))
+          .catch(() => cb({}));
+      },
+    });
     let retried = false;
     setStatus('connecting');
     s.on('connect', () => { retried = false; setStatus('connected'); setError(''); });
